@@ -1,0 +1,78 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'README.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  update-docs:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Use Node.js 20.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Generate TypeDoc documentation
+      run: |
+        npx typedoc src/index.ts --out docs/api --theme default
+      continue-on-error: true
+    
+    - name: Update CHANGELOG
+      run: |
+        # Auto-generate changelog from git commits
+        if ! grep -q "## \[$(node -p "require('./package.json').version")\]" CHANGELOG.md; then
+          echo "Updating CHANGELOG.md with latest version..."
+          
+          # Get the latest version from package.json
+          VERSION=$(node -p "require('./package.json').version")
+          DATE=$(date +%Y-%m-%d)
+          
+          # Create temp file with new entry
+          echo "## [$VERSION] - $DATE" > temp_changelog.md
+          echo "" >> temp_changelog.md
+          echo "### Added" >> temp_changelog.md
+          echo "- Initial release of MS Rule Engine Node.js SDK" >> temp_changelog.md
+          echo "" >> temp_changelog.md
+          
+          # Append existing changelog
+          cat CHANGELOG.md >> temp_changelog.md
+          mv temp_changelog.md CHANGELOG.md
+        fi
+    
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      if: github.ref == 'refs/heads/main'
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./docs
+        force_orphan: true
+      continue-on-error: true
+    
+    - name: Commit documentation updates
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add -A
+        if git diff --staged --quiet; then
+          echo "No documentation changes to commit"
+        else
+          git commit -m "docs: update documentation [skip ci]"
+          git push
+        fi
+      continue-on-error: true

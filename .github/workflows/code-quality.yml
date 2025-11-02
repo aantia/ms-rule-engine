@@ -1,0 +1,107 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+    
+    - name: Use Node.js 20.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run tests with coverage
+      run: npm run test:coverage
+    
+    - name: SonarCloud Scan
+      uses: SonarSource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      continue-on-error: true
+    
+    - name: CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+      with:
+        languages: javascript
+      continue-on-error: true
+
+  dependency-review:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Dependency Review
+      uses: actions/dependency-review-action@v3
+      with:
+        fail-on-severity: moderate
+
+  validate-pr:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Use Node.js 20.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Check for breaking changes
+      run: |
+        # Build current version
+        npm run build
+        
+        # Check if major version bump is needed
+        if git diff --name-only HEAD~1 | grep -E "(src/models|src/core)" > /dev/null; then
+          echo "⚠️  Changes detected in core files. Consider if this is a breaking change."
+          echo "If this is a breaking change, please update the major version."
+        fi
+    
+    - name: Validate package.json
+      run: |
+        node -e "
+          const pkg = require('./package.json');
+          if (!pkg.name || !pkg.version || !pkg.description) {
+            console.error('❌ package.json is missing required fields');
+            process.exit(1);
+          }
+          if (!pkg.repository || !pkg.repository.url) {
+            console.error('❌ package.json is missing repository information');
+            process.exit(1);
+          }
+          console.log('✅ package.json validation passed');
+        "
+    
+    - name: Check README links
+      run: |
+        # Check if README has broken links (basic check)
+        if grep -o 'https://[^)]*' README.md | head -5 | xargs -I {} curl -s --head {} | grep -q "200 OK"; then
+          echo "✅ README links appear to be working"
+        else
+          echo "⚠️  Some README links might be broken"
+        fi
